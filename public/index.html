@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlentyTechnology.com - Prototipo con IA</title>
+    
+    <!-- 1. DEPENDENCIAS -->
+    <!-- Tailwind CSS para un diseño moderno y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts para una tipografía limpia -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* Estilo base usando la fuente Inter */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilo para un spinner de carga simple */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white antialiased">
+
+    <!-- Contenedor principal de la aplicación -->
+    <div id="app-root"></div>
+
+    <!-- 2. CONFIGURACIÓN Y LÓGICA DE FIREBASE -->
+    <script type="module">
+        // Importaciones de los módulos de Firebase que usaremos
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged, 
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            signOut 
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc,
+            setDoc
+        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- PASO A: CONFIGURACIÓN DE FIREBASE ---
+        // ¡IMPORTANTE! Reemplaza este objeto con la configuración de tu propio proyecto de Firebase.
+        const firebaseConfig = {
+            apiKey: "TU_API_KEY",
+            authDomain: "TU_AUTH_DOMAIN",
+            projectId: "TU_PROJECT_ID",
+            storageBucket: "TU_STORAGE_BUCKET",
+            messagingSenderId: "TU_MESSAGING_SENDER_ID",
+            appId: "TU_APP_ID"
+        };
+
+        // --- PASO B: INICIALIZACIÓN DE SERVICIOS ---
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- PASO C: MANEJO DEL ESTADO DE LA APLICACIÓN ---
+        const appState = {
+            currentUser: null,
+            userData: null,
+            currentView: 'loading', // Vistas posibles: 'loading', 'login', 'register', 'dashboard'
+            isLoading: true,
+            errorMessage: '',
+            geminiSuggestions: null, // NUEVO: Para guardar las sugerencias de la IA
+            isGeneratingSuggestions: false // NUEVO: Para el estado de carga de Gemini
+        };
+
+        // --- PASO D: LÓGICA DE RENDERIZADO Y VISTAS ---
+        const appRoot = document.getElementById('app-root');
+
+        function renderApp() {
+            appState.isLoading = false;
+            appRoot.innerHTML = '';
+
+            switch (appState.currentView) {
+                case 'loading':
+                    appRoot.innerHTML = LoadingView();
+                    break;
+                case 'login':
+                    appRoot.innerHTML = LoginView();
+                    attachLoginListeners();
+                    break;
+                case 'register':
+                    appRoot.innerHTML = RegisterView();
+                    attachRegisterListeners();
+                    break;
+                case 'dashboard':
+                    appRoot.innerHTML = DashboardView();
+                    attachDashboardListeners();
+                    break;
+                default:
+                    appRoot.innerHTML = `<p class="text-red-500">Error: Vista desconocida</p>`;
+            }
+        }
+
+        // --- PLANTILLAS DE VISTAS (Componentes de UI) ---
+
+        function LoadingView() {
+            return `
+                <div class="flex min-h-screen flex-col items-center justify-center">
+                    <div class="loader"></div>
+                    <p class="mt-4 text-gray-400">Cargando PlentyTechnology...</p>
+                </div>
+            `;
+        }
+
+        function LoginView() {
+            return `
+                <div class="flex min-h-screen flex-col items-center justify-center p-6 bg-gray-900">
+                    <div class="w-full max-w-md p-8 space-y-6 bg-gray-800 rounded-xl shadow-lg">
+                        <div class="text-center">
+                            <h1 class="text-3xl font-bold text-white">PlentyTechnology.com</h1>
+                            <p class="text-gray-400">Inicia sesión para acceder a la plataforma</p>
+                        </div>
+                        <form id="login-form" class="space-y-6">
+                            <div>
+                                <label for="email" class="text-sm font-medium text-gray-300">Correo Electrónico</label>
+                                <input id="email" type="email" required class="w-full px-4 py-2 mt-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="tu@email.com">
+                            </div>
+                            <div>
+                                <label for="password" class="text-sm font-medium text-gray-300">Contraseña</label>
+                                <input id="password" type="password" required class="w-full px-4 py-2 mt-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="********">
+                            </div>
+                            ${appState.errorMessage ? `<p class="text-sm text-red-400">${appState.errorMessage}</p>` : ''}
+                            <div>
+                                <button type="submit" class="w-full px-4 py-2 font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-blue-500 transition-colors duration-300">
+                                    ${appState.isLoading ? '<div class="loader mx-auto" style="width:20px; height:20px; border-width: 2px;"></div>' : 'Iniciar Sesión'}
+                                </button>
+                            </div>
+                        </form>
+                        <p class="text-center text-sm text-gray-400">
+                            ¿No tienes una cuenta? 
+                            <a href="#" id="go-to-register" class="font-medium text-blue-400 hover:underline">Regístrate</a>
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        function RegisterView() {
+            return `
+                <div class="flex min-h-screen flex-col items-center justify-center p-6 bg-gray-900">
+                    <div class="w-full max-w-md p-8 space-y-6 bg-gray-800 rounded-xl shadow-lg">
+                        <div class="text-center">
+                            <h1 class="text-3xl font-bold text-white">Crear una Cuenta</h1>
+                            <p class="text-gray-400">Únete a PlentyTechnology.com</p>
+                        </div>
+                        <form id="register-form" class="space-y-6">
+                            <div>
+                                <label for="displayName" class="text-sm font-medium text-gray-300">Nombre Completo</label>
+                                <input id="displayName" type="text" required class="w-full px-4 py-2 mt-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Juan Pérez">
+                            </div>
+                            <div>
+                                <label for="email" class="text-sm font-medium text-gray-300">Correo Electrónico</label>
+                                <input id="email" type="email" required class="w-full px-4 py-2 mt-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="tu@email.com">
+                            </div>
+                            <div>
+                                <label for="password" class="text-sm font-medium text-gray-300">Contraseña</label>
+                                <input id="password" type="password" required class="w-full px-4 py-2 mt-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Mínimo 6 caracteres">
+                            </div>
+                            ${appState.errorMessage ? `<p class="text-sm text-red-400">${appState.errorMessage}</p>` : ''}
+                            <div>
+                                <button type="submit" class="w-full px-4 py-2 font-bold text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-green-500 transition-colors duration-300">
+                                     ${appState.isLoading ? '<div class="loader mx-auto" style="width:20px; height:20px; border-width: 2px;"></div>' : 'Crear Cuenta'}
+                                </button>
+                            </div>
+                        </form>
+                        <p class="text-center text-sm text-gray-400">
+                            ¿Ya tienes una cuenta? 
+                            <a href="#" id="go-to-login" class="font-medium text-blue-400 hover:underline">Inicia sesión</a>
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function DashboardView() {
+            const { displayName, role } = appState.userData;
+            const email = appState.currentUser.email;
+
+            const renderRolePanel = (userRole) => {
+                switch(userRole) {
+                    case 'admin': return `<div class="bg-red-900/50 p-4 rounded-lg border border-red-700"><h3 class="font-bold text-lg text-red-300">Panel de Administrador</h3><p class="text-red-400 mt-2">Acceso total al sistema. Puedes gestionar usuarios, roles y configuraciones críticas.</p></div>`;
+                    case 'developer': return `<div class="bg-green-900/50 p-4 rounded-lg border border-green-700"><h3 class="font-bold text-lg text-green-300">Herramientas de Desarrollo</h3><p class="text-green-400 mt-2">Acceso a logs, entornos de prueba y despliegue de nuevas funcionalidades.</p></div>`;
+                    case 'operator': return `<div class="bg-yellow-900/50 p-4 rounded-lg border border-yellow-700"><h3 class="font-bold text-lg text-yellow-300">Consola de Operador</h3><p class="text-yellow-400 mt-2">Puedes monitorear el estado del sistema y gestionar operaciones diarias.</p></div>`;
+                    case 'customer': return `<div class="bg-blue-900/50 p-4 rounded-lg border border-blue-700"><h3 class="font-bold text-lg text-blue-300">Portal del Cliente</h3><p class="text-blue-400 mt-2">Bienvenido. Aquí puedes ver tus servicios, facturas y solicitar soporte.</p></div>`;
+                    case 'viewer': return `<div class="bg-purple-900/50 p-4 rounded-lg border border-purple-700"><h3 class="font-bold text-lg text-purple-300">Modo Visualización</h3><p class="text-purple-400 mt-2">Tienes acceso de solo lectura a los paneles de monitoreo.</p></div>`;
+                    default: return `<div class="bg-gray-700 p-4 rounded-lg"><p>Rol no reconocido: ${userRole}</p></div>`;
+                }
+            }
+            
+            // NUEVO: Función para renderizar el panel de sugerencias de Gemini
+            const renderGeminiSuggestions = () => {
+                if (appState.isGeneratingSuggestions) {
+                    return `<div class="flex justify-center items-center h-24"><div class="loader"></div></div>`;
+                }
+                if (appState.geminiSuggestions) {
+                    // Formatear el texto de respuesta en una lista HTML
+                    const suggestionsList = appState.geminiSuggestions
+                        .split('\n')
+                        .filter(line => line.trim().length > 0)
+                        .map(line => `<li class="p-3 bg-gray-900/50 rounded-md">${line.replace(/^[*-]\s*/, '')}</li>`)
+                        .join('');
+                    return `<ul class="space-y-2 text-gray-300">${suggestionsList}</ul>`;
+                }
+                return `<p class="text-center text-gray-500">Haz clic en el botón para obtener sugerencias personalizadas para tu día.</p>`;
+            }
+
+            return `
+                <div class="flex min-h-screen flex-col items-center p-6 bg-gray-900">
+                    <div class="w-full max-w-4xl">
+                        <header class="flex justify-between items-center mb-8">
+                            <h1 class="text-2xl font-bold">PlentyTechnology</h1>
+                            <button id="logout-btn" class="px-4 py-2 text-sm font-medium bg-gray-700 rounded-md hover:bg-gray-600 transition-colors">Cerrar Sesión</button>
+                        </header>
+                        <main class="bg-gray-800 p-8 rounded-xl shadow-lg space-y-6">
+                            <div>
+                                <h2 class="text-3xl font-bold">Bienvenido, ${displayName || 'Usuario'}</h2>
+                                <p class="text-gray-400">${email}</p>
+                            </div>
+                            <div class="border-t border-gray-700 pt-6">
+                                <p class="text-sm text-gray-500 mb-2">ROL ASIGNADO</p>
+                                <p class="text-xl font-bold capitalize px-3 py-1 bg-gray-700 rounded-full inline-block">${role}</p>
+                            </div>
+                            <div class="border-t border-gray-700 pt-6">
+                                <p class="text-sm text-gray-500 mb-2">ACCIONES DISPONIBLES</p>
+                                ${renderRolePanel(role)}
+                            </div>
+
+                            <!-- NUEVA SECCIÓN: GEMINI API -->
+                            <div class="border-t border-gray-700 pt-6">
+                                <div class="flex justify-between items-center mb-4">
+                                     <p class="text-sm text-gray-500">SUGERENCIAS DEL DÍA ✨</p>
+                                     <button id="gemini-btn" class="px-4 py-2 text-sm font-medium bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors disabled:bg-indigo-900 disabled:cursor-not-allowed" ${appState.isGeneratingSuggestions ? 'disabled' : ''}>
+                                        Generar Sugerencias
+                                     </button>
+                                </div>
+                                <div id="gemini-suggestions-container" class="p-4 bg-gray-700/50 rounded-lg min-h-[100px] flex flex-col justify-center">
+                                    ${renderGeminiSuggestions()}
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- PASO E: MANEJO DE EVENTOS ---
+
+        function attachLoginListeners() {
+            const loginForm = document.getElementById('login-form');
+            loginForm?.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                appState.isLoading = true;
+                appState.errorMessage = '';
+                renderApp();
+
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                try {
+                    await signInWithEmailAndPassword(auth, email, password);
+                } catch (error) {
+                    appState.isLoading = false;
+                    appState.errorMessage = 'Credenciales incorrectas. Por favor, inténtalo de nuevo.';
+                    renderApp();
+                }
+            });
+
+            document.getElementById('go-to-register')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                appState.currentView = 'register';
+                appState.errorMessage = '';
+                renderApp();
+            });
+        }
+
+        function attachRegisterListeners() {
+            const registerForm = document.getElementById('register-form');
+            registerForm?.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                appState.isLoading = true;
+                appState.errorMessage = '';
+                renderApp();
+
+                const displayName = document.getElementById('displayName').value;
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                try {
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                    const user = userCredential.user;
+                    await setDoc(doc(db, "users", user.uid), {
+                        displayName: displayName,
+                        email: email,
+                        role: "customer",
+                        createdAt: new Date()
+                    });
+                } catch (error) {
+                    appState.isLoading = false;
+                    if (error.code === 'auth/email-already-in-use') {
+                        appState.errorMessage = 'Este correo electrónico ya está en uso.';
+                    } else if (error.code === 'auth/weak-password') {
+                        appState.errorMessage = 'La contraseña debe tener al menos 6 caracteres.';
+                    } else {
+                        appState.errorMessage = 'Ocurrió un error al crear la cuenta.';
+                    }
+                    console.error("Error de registro:", error);
+                    renderApp();
+                }
+            });
+
+            document.getElementById('go-to-login')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                appState.currentView = 'login';
+                appState.errorMessage = '';
+                renderApp();
+            });
+        }
+
+        function attachDashboardListeners() {
+            const logoutBtn = document.getElementById('logout-btn');
+            logoutBtn?.addEventListener('click', async () => {
+                // Limpiar sugerencias al cerrar sesión
+                appState.geminiSuggestions = null;
+                await signOut(auth);
+            });
+            
+            // NUEVO: Listener para el botón de Gemini
+            const geminiBtn = document.getElementById('gemini-btn');
+            geminiBtn?.addEventListener('click', handleGetGeminiSuggestions);
+        }
+
+        // --- PASO F: LÓGICA DE AUTENTICACIÓN Y DATOS ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                appState.currentUser = user;
+                const userDocRef = doc(db, "users", user.uid);
+                const userDocSnap = await getDoc(userDocRef);
+
+                if (userDocSnap.exists()) {
+                    appState.userData = userDocSnap.data();
+                    appState.currentView = 'dashboard';
+                } else {
+                    console.error("Error: No se encontraron datos para este usuario en Firestore.");
+                    appState.userData = { role: 'guest', displayName: 'Usuario sin datos' };
+                    appState.currentView = 'dashboard';
+                }
+            } else {
+                appState.currentUser = null;
+                appState.userData = null;
+                appState.currentView = 'login';
+            }
+            renderApp();
+        });
+        
+        // --- NUEVO PASO G: LÓGICA DE LA API DE GEMINI ---
+
+        // Función para construir el prompt basado en el rol del usuario
+        function getPromptForRole(role, displayName) {
+            switch(role) {
+                case 'admin':
+                    return `Eres un asistente experto para un administrador llamado ${displayName} en la plataforma 'PlentyTechnology.com'. Genera una lista corta de 3 tareas prioritarias y accionables para hoy, enfocadas en gestión, supervisión y estrategia. Sé conciso y profesional. Usa viñetas.`;
+                case 'developer':
+                    return `Eres un asistente de productividad para un desarrollador llamado ${displayName} en 'PlentyTechnology.com'. Genera una lista de 3 sugerencias técnicas para hoy. Incluye tareas como revisión de código, optimización o investigación de nuevas tecnologías. Sé directo y técnico. Usa viñetas.`;
+                case 'operator':
+                     return `Eres un asistente de operaciones para ${displayName} en 'PlentyTechnology.com'. Genera una lista de 3 tareas clave para monitorear el estado del sistema y asegurar la continuidad del servicio hoy. Enfócate en la prevención y la eficiencia. Usa viñetas.`;
+                case 'customer':
+                    return `Eres un asistente amigable para ${displayName}, un cliente de 'PlentyTechnology.com'. Genera una lista de 3 ideas o consejos sobre cómo puede aprovechar al máximo la plataforma hoy. Usa un tono cercano y útil. Usa viñetas.`;
+                case 'viewer':
+                    return `Eres un asistente informativo para ${displayName}, un observador en 'PlentyTechnology.com'. Genera una lista de 3 puntos clave o métricas importantes que debería revisar hoy para tener una visión general del estado de la plataforma. Usa un tono neutral. Usa viñetas.`;
+                default:
+                    return `Genera 3 consejos generales para un usuario llamado ${displayName} en la plataforma 'PlentyTechnology.com'.`;
+            }
+        }
+
+        async function handleGetGeminiSuggestions() {
+            if (!appState.userData) return;
+
+            appState.isGeneratingSuggestions = true;
+            appState.geminiSuggestions = null; // Limpiar sugerencias anteriores
+            renderApp(); // Re-render para mostrar el loader
+
+            const { role, displayName } = appState.userData;
+            const prompt = getPromptForRole(role, displayName);
+            
+            const apiKey = ""; // Canvas proporcionará la clave de API en tiempo de ejecución
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+            try {
+                const payload = {
+                    contents: [{
+                        parts: [{ text: prompt }]
+                    }]
+                };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error de API: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates[0]?.content?.parts[0]?.text) {
+                    appState.geminiSuggestions = result.candidates[0].content.parts[0].text;
+                } else {
+                    throw new Error("Respuesta inesperada de la API de Gemini.");
+                }
+
+            } catch (error) {
+                console.error("Error al llamar a la API de Gemini:", error);
+                appState.geminiSuggestions = "No se pudieron generar las sugerencias en este momento. Inténtalo de nuevo más tarde.";
+            } finally {
+                appState.isGeneratingSuggestions = false;
+                renderApp(); // Re-render para mostrar las sugerencias o el error
+            }
+        }
+
+    </script>
+</body>
+</html>
