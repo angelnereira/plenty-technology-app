@@ -4,13 +4,15 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 // Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_AUTH_DOMAIN",
-  projectId: "TU_PROJECT_ID",
-  storageBucket: "TU_STORAGE_BUCKET",
-  messagingSenderId: "TU_MESSAGING_SENDER_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyBG_VvFcah8VGK6qbpMt5xlltE-SmGIHYw",
+  authDomain: "plenty-technology.firebaseapp.com",
+  projectId: "plenty-technology",
+  storageBucket: "plenty-technology.firebasestorage.app",
+  messagingSenderId: "56574802573",
+  appId: "1:56574802573:web:016c0cb075b17e9b05c0c4",
+  measurementId: "G-ZJ7JCZDHD1"
 };
 
 // Initialize Firebase
